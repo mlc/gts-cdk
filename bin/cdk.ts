@@ -5,6 +5,13 @@ import { GoToSocialStack } from '../lib/cdk-stack';
 
 const app = new cdk.App();
 new GoToSocialStack(app, 'GoToSocialStack', {
+  env: { region: 'us-east-1', account: '859317109141' },
+  domainName: 'social.mlcastle.net',
+  hostedZone: 'mlcastle.net',
+  accountDomain: 'mlcastle.net',
+  certificateArn:
+    'arn:aws:acm:us-east-1:859317109141:certificate/1357453e-610d-45ef-8dee-1310f68192c1',
+  mailgunSecretName: 'mailgun',
   /* If you don't specify 'env', this stack will be environment-agnostic.
    * Account/Region-dependent features and context lookups will not work,
    * but a single synthesized template can be deployed anywhere. */
