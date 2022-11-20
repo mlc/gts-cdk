@@ -22,7 +22,7 @@ This is a draft of getting [gotosocial][] working in AWS with [CDK][]
 - a NAT gateway $0.045/hr
 - plus storage, bandwidth, etc. maybe i'm forgetting something?
 
-estimated total cost: $67+ / month, i guess. my test instance was up for only an hour or two before i deleted it, what do i know.
+estimated total cost: $67+ / month, i guess. my test instance was up for only an hour or two before i deleted it, what do i know. like half of this is for the NAT gateway, which seems like a ripoff, probably it can be worked around.
 
 [gotosocial]: https://gotosocial.org/
 [cdk]: https://aws.amazon.com/cdk/
