@@ -1,8 +1,7 @@
 {
+  "extends": "@tsconfig/node16/tsconfig.json",
   "compilerOptions": {
-    "target": "ES2020",
     "module": "commonjs",
-    "lib": ["es2020"],
     "declaration": true,
     "strict": true,
     "noImplicitAny": true,
@@ -19,5 +18,5 @@
     "strictPropertyInitialization": false,
     "typeRoots": ["./node_modules/@types"]
   },
-  "exclude": ["node_modules", "cdk.out"]
+  "exclude": ["node_modules", "cdk.out", "ses-handler"]
 }

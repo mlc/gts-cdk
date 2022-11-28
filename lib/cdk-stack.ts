@@ -7,32 +7,30 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecs_patterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ses from 'aws-cdk-lib/aws-ses';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApplicationProtocol } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import type { Construct } from 'constructs';
+import { SesCreds } from './ses-creds';
 
 interface Props extends cdk.StackProps {
   domainName: string;
   hostedZone?: string;
   accountDomain?: string;
   certificateArn?: string;
-  mailgunSecretName?: string;
 }
 
 export class GoToSocialStack extends cdk.Stack {
   constructor(
     scope: Construct,
     id: string,
-    {
-      domainName,
-      hostedZone,
-      accountDomain,
-      certificateArn,
-      mailgunSecretName,
-      ...props
-    }: Props
+    { domainName, hostedZone, accountDomain, certificateArn, ...props }: Props
   ) {
     super(scope, id, props);
+
+    const domainZone = route53.HostedZone.fromLookup(this, 'domainZone', {
+      domainName: hostedZone ?? domainName,
+    });
 
     const taskRole = new iam.Role(this, 'taskRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -41,6 +39,14 @@ export class GoToSocialStack extends cdk.Stack {
     const s3Key = new iam.AccessKey(this, 's3key', {
       user: s3User,
       status: iam.AccessKeyStatus.ACTIVE,
+    });
+    const s3KeyAccess = new ssm.StringParameter(this, 's3KeyAccess', {
+      parameterName: '/gts/s3/access',
+      stringValue: s3Key.accessKeyId,
+    });
+    const s3KeySecret = new ssm.StringParameter(this, 's3KeySecret', {
+      parameterName: '/gts/s3/secret',
+      stringValue: s3Key.secretAccessKey.unsafeUnwrap(),
     });
 
     const dataBucket = new s3.Bucket(this, 'dataBucket', {
@@ -54,10 +60,11 @@ export class GoToSocialStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
     dataBucket.grantReadWrite(taskRole);
+    dataBucket.grantReadWrite(s3User);
 
     const vpc = new ec2.Vpc(this, 'gtsVpc', {
       maxAzs: 3,
-      natGateways: 1,
+      natGateways: 0,
       subnetConfiguration: [
         {
           subnetType: ec2.SubnetType.PUBLIC,
@@ -66,10 +73,6 @@ export class GoToSocialStack extends cdk.Stack {
         {
           subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
           name: 'private',
-        },
-        {
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-          name: 'private egress',
         },
       ],
     });
@@ -96,6 +99,23 @@ export class GoToSocialStack extends cdk.Stack {
       },
       securityGroups: [dbSecurityGroup],
     });
+    const sesCreds = new SesCreds(this, 'sesCreds', {
+      parameterPrefix: '/gts/smtp',
+    });
+    const emailConfigurationSet = new ses.ConfigurationSet(
+      this,
+      'emailConfigurationSet',
+      {
+        suppressionReasons: ses.SuppressionReasons.BOUNCES_AND_COMPLAINTS,
+        tlsPolicy: ses.ConfigurationSetTlsPolicy.REQUIRE,
+        sendingEnabled: true,
+      }
+    );
+    const emailIdentity = new ses.EmailIdentity(this, 'emailIdentity', {
+      mailFromDomain: domainName,
+      identity: ses.Identity.publicHostedZone(domainZone),
+      configurationSet: emailConfigurationSet,
+    });
 
     const environment: Record<string, string> = {
       GTS_HOST: domainName,
@@ -109,53 +129,37 @@ export class GoToSocialStack extends cdk.Stack {
       GTS_DB_TLS_MODE: 'enable',
       GTS_STORAGE_BACKEND: 's3',
       GTS_STORAGE_S3_BUCKET: dataBucket.bucketName,
-      GTS_STORAGE_S3_ACCESS_KEY: s3Key.accessKeyId,
-      GTS_STORAGE_S3_SECRET_KEY: s3Key.secretAccessKey.unsafeUnwrap(),
+      GTS_STORAGE_S3_ACCESS_KEY: s3KeyAccess.stringValue,
       GTS_STORAGE_S3_ENDPOINT: `s3.${this.region}.amazonaws.com`,
       GTS_LETSENCRYPT_ENABLED: 'false',
       GTS_LETSENCRYPT_EMAIL_ADDRESS: '',
+      GTS_SMTP_HOST: `email-smtp.${this.region}.amazonaws.com`,
+      GTS_SMTP_PORT: '587',
+      GTS_SMTP_FROM: `admin@${domainName}`,
     };
-
-    const dbUser = ecs.Secret.fromSecretsManager(db.secret!, 'username');
-    const dbPassword = ecs.Secret.fromSecretsManager(db.secret!, 'password');
 
     const secrets: Record<string, ecs.Secret> = {
-      GTS_DB_USER: dbUser,
-      GTS_DB_PASSWORD: dbPassword,
+      GTS_DB_USER: ecs.Secret.fromSecretsManager(db.secret!, 'username'),
+      GTS_DB_PASSWORD: ecs.Secret.fromSecretsManager(db.secret!, 'password'),
+      GTS_STORAGE_S3_SECRET_KEY: ecs.Secret.fromSsmParameter(s3KeySecret),
+      GTS_SMTP_USERNAME: ecs.Secret.fromSsmParameter(
+        sesCreds.usernameParameter
+      ),
+      GTS_SMTP_PASSOWRD: ecs.Secret.fromSsmParameter(
+        sesCreds.passwordParameter
+      ),
     };
 
-    if (mailgunSecretName) {
-      const mailgunSecret = secretsmanager.Secret.fromSecretNameV2(
-        this,
-        'mailgunSecret',
-        mailgunSecretName
-      );
-      secrets.GTS_SMTP_USERNAME = ecs.Secret.fromSecretsManager(
-        mailgunSecret,
-        'username'
-      );
-      secrets.GTS_SMTP_FROM = ecs.Secret.fromSecretsManager(
-        mailgunSecret,
-        'username'
-      );
-      secrets.GTS_SMTP_PASSWORD = ecs.Secret.fromSecretsManager(
-        mailgunSecret,
-        'password'
-      );
-      environment.GTS_SMTP_HOST = 'smtp.mailgun.org';
-      environment.GTS_SMTP_PORT = '587';
-    }
-
     const cluster = new ecs.Cluster(this, 'cluster', { vpc });
-    const domainZone = route53.HostedZone.fromLookup(this, 'domainZone', {
-      domainName: hostedZone ?? domainName,
-    });
 
     const taskSecurityGroup = new ec2.SecurityGroup(this, 'taskSecurity', {
       vpc,
       allowAllOutbound: true,
     });
-    dbSecurityGroup.addIngressRule(taskSecurityGroup, ec2.Port.tcp(5432));
+    dbSecurityGroup.addIngressRule(
+      taskSecurityGroup,
+      ec2.Port.tcp(db.instanceEndpoint.port)
+    );
 
     const certificate: acm.ICertificate | undefined = certificateArn
       ? acm.Certificate.fromCertificateArn(this, 'cert', certificateArn)
@@ -166,7 +170,7 @@ export class GoToSocialStack extends cdk.Stack {
       'service',
       {
         cluster,
-        taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        taskSubnets: { subnetType: ec2.SubnetType.PUBLIC },
         cpu: 512,
         desiredCount: 1,
         memoryLimitMiB: 2048,
@@ -183,6 +187,11 @@ export class GoToSocialStack extends cdk.Stack {
           image: ecs.ContainerImage.fromRegistry(
             'superseriousbusiness/gotosocial:latest'
           ),
+          logDriver: ecs.LogDriver.awsLogs({
+            logRetention: 180,
+            mode: ecs.AwsLogDriverMode.NON_BLOCKING,
+            streamPrefix: 'gts',
+          }),
           containerName: 'gotosocial',
           containerPort: 8080,
           environment,
@@ -192,6 +201,6 @@ export class GoToSocialStack extends cdk.Stack {
       }
     );
 
-    service.node.addDependency(db);
+    service.node.addDependency(db, ...sesCreds.dependencies, emailIdentity);
   }
 }

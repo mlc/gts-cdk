@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "Node16"
+  },
+  "exclude": ["node_modules", "cdk.out"],
+  "include": ["ses-handler"]
+}
