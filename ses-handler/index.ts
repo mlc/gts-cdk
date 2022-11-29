@@ -26,7 +26,7 @@ const MESSAGE = 'SendRawEmail';
 const TERMINAL = 'aws4_request';
 const VERSION = Buffer.from([0x04]);
 
-const region = process.env.AWS_REGION;
+const region = process.env.AWS_REGION ?? '';
 
 const ssm = new AWS.SSM({ region });
 const sts = new AWS.STS({ region });
@@ -34,7 +34,7 @@ const sts = new AWS.STS({ region });
 const sign = (key: Buffer, msg: string): Buffer =>
   createHmac('sha256', key).update(msg, 'utf8').digest();
 
-const calculateKey = (secretAccessKey: string, region: string): string => {
+const calculateKey = (secretAccessKey: string): string => {
   if (!SMTP_REGIONS.includes(region)) {
     throw new Error(`The ${region} region doesn't have an SMTP endpoint.`);
   }
@@ -93,7 +93,7 @@ export const handler: CdkCustomResourceHandler = async (event, context) => {
     case 'Create':
     case 'Update':
       arn = await putParameter(
-        parameterType === 'password' ? calculateKey(key, region!) : key,
+        parameterType === 'password' ? calculateKey(key) : key,
         parameterType
       );
       break;

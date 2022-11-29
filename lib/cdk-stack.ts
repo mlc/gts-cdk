@@ -18,13 +18,21 @@ interface Props extends cdk.StackProps {
   hostedZone?: string;
   accountDomain?: string;
   certificateArn?: string;
+  enableExecute?: boolean;
 }
 
 export class GoToSocialStack extends cdk.Stack {
   constructor(
     scope: Construct,
     id: string,
-    { domainName, hostedZone, accountDomain, certificateArn, ...props }: Props
+    {
+      domainName,
+      hostedZone,
+      accountDomain,
+      certificateArn,
+      enableExecute = true,
+      ...props
+    }: Props
   ) {
     super(scope, id, props);
 
@@ -189,6 +197,7 @@ export class GoToSocialStack extends cdk.Stack {
         certificate,
         openListener: true,
         securityGroups: [taskSecurityGroup],
+        enableExecuteCommand: enableExecute,
         taskImageOptions: {
           image: ecs.ContainerImage.fromRegistry(
             'superseriousbusiness/gotosocial:latest'
