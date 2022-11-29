@@ -25,11 +25,8 @@ export class SesCreds extends Construct {
   ) {
     super(scope, id);
 
-    const smtpUserGroup = new iam.Group(this, 'smtpUserGroup');
-    const smtpUser = new iam.User(this, 'smtpUser', {
-      groups: [smtpUserGroup],
-    });
-    smtpUserGroup.addToPolicy(
+    const smtpUser = new iam.User(this, 'smtpUser');
+    smtpUser.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['ses:SendRawEmail'],
@@ -72,14 +69,24 @@ export class SesCreds extends Construct {
         SES_PARAMETER_PREFIX: parameterPrefix,
       },
     });
-    this.usernameParameter.grantWrite(fn);
-    this.passwordParameter.grantWrite(fn);
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['ssm:PutParameter', 'ssm:DeleteParameter'],
+        resources: [
+          this.usernameParameter.parameterArn,
+          this.passwordParameter.parameterArn,
+        ],
+      })
+    );
+
     if (keyArn) {
       kms.Key.fromKeyArn(this, 'kmsKey', keyArn).grantEncrypt(fn);
     }
 
     const provider = new custom.Provider(this, 'provider', {
       onEventHandler: fn,
+      logRetention: 1,
     });
 
     const username = new cdk.CustomResource(this, 'username', {

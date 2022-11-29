@@ -32,9 +32,6 @@ export class GoToSocialStack extends cdk.Stack {
       domainName: hostedZone ?? domainName,
     });
 
-    const taskRole = new iam.Role(this, 'taskRole', {
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
-    });
     const s3User = new iam.User(this, 's3user');
     const s3Key = new iam.AccessKey(this, 's3key', {
       user: s3User,
@@ -59,16 +56,25 @@ export class GoToSocialStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
-    dataBucket.grantReadWrite(taskRole);
     dataBucket.grantReadWrite(s3User);
 
     const vpc = new ec2.Vpc(this, 'gtsVpc', {
       maxAzs: 3,
-      natGateways: 0,
+      natGateways: 1,
+      natGatewayProvider: ec2.NatProvider.instance({
+        instanceType: ec2.InstanceType.of(
+          ec2.InstanceClass.T4G,
+          ec2.InstanceSize.NANO
+        ),
+      }),
       subnetConfiguration: [
         {
           subnetType: ec2.SubnetType.PUBLIC,
           name: 'public',
+        },
+        {
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          name: 'inside',
         },
         {
           subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
@@ -170,7 +176,7 @@ export class GoToSocialStack extends cdk.Stack {
       'service',
       {
         cluster,
-        taskSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
         cpu: 512,
         desiredCount: 1,
         memoryLimitMiB: 2048,
@@ -196,11 +202,14 @@ export class GoToSocialStack extends cdk.Stack {
           containerPort: 8080,
           environment,
           secrets,
-          taskRole,
         },
       }
     );
 
-    service.node.addDependency(db, ...sesCreds.dependencies, emailIdentity);
+    service.taskDefinition.node.addDependency(
+      db,
+      ...sesCreds.dependencies,
+      emailIdentity
+    );
   }
 }
